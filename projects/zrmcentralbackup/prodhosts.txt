@@ -1,0 +1,11 @@
+mradevback1.mail.corp.mud.foobar.com
+mradevback2.mail.corp.ac4.foobar.com
+mradevback3.mail.re3.foobar.com
+mradevback4.mail.corp.sp1.foobar.com
+mradevback5.mail.gq1.foobar.com
+mradevback6.mail.in.foobar.com
+mradevback7.mail.sg1.foobar.com
+mradevback8.mail.tp2.foobar.com
+mradevback9.mail.corp.ukl.foobar.com
+mradevback10.mail.re2.foobar.com
+mradevback11.mail.ne1.foobar.com

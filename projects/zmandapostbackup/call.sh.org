@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# Here you need to enter your dbuser password and host information
+sh /home/mysql/postbackup_procs/getmysqlinfo.sh dbatest db1sp1.as3.sandiego.corp.com SHOWVARIABLES.out 2>&1 >> "/home/mysql/postbackup_procs/postbackup.log"
+sh /home/mysql/postbackup_procs/getcnf.sh db1sp1.as3.sandiego.corp.com 2>&1 >> "/home/mysql/postbackup_procs/postbackup.log"
