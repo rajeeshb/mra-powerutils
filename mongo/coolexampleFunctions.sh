@@ -14,18 +14,6 @@
 # change shasum
 ##################################################
 
-
-#__        ___    ____  _   _ ___ _   _  ____ _ _ _
-#\ \      / / \  |  _ \| \ | |_ _| \ | |/ ___| | | |
-# \ \ /\ / / _ \ | |_) |  \| || ||  \| | |  _| | | |
-#  \ V  V / ___ \|  _ <| |\  || || |\  | |_| |_|_|_|
-#   \_/\_/_/   \_\_| \_\_| \_|___|_| \_|\____(_|_|_)
-#
-# If you don't understand what this script does... DO NOT RUN IT.
-# This is only meant to be run in the MYDEV environment,
-# DO NOT RUN THIS AGAINST OUR PRODUCTION DATABASE!!
-
-
 # commands we're going to use
 _tput=$(which tput)
 green=$(${_tput} setaf 2)
@@ -36,11 +24,11 @@ _mongo='/usr/bin/mongo --quiet --norc'  # linux
 
 # static variables
 account='myapplication'
-user_prefix='dvlon'
+user_prefix='foobar'
 user_min='001'
 user_max='600'
-domain='@tagthis.co'
-db='core'
+domain='@foo.co'
+db='foo'
 
 debug_test()
 {
@@ -74,7 +62,7 @@ EOF
 set_history()
 {
   ${_mongo} ${db} <<EOF
-    db.users.update(
+    db.foo.update(
       {email: "${email}"},
         {\$set:
           {history: {
@@ -92,20 +80,20 @@ set_permissions()
 {
   # set user permissions
   ${_mongo} ${db} <<EOF
-    db.users.update(
+    db.foo.update(
       {email: "${email}"},
         {\$set:
           {permissions: [
-            "tealium:accounts:myapplication:read",
-            "tealium:accounts:myapplication:extensions:javascript:edit",
-            "tealium:accounts:myapplication:profiles:${profile}:read",
-            "tealium:accounts:myapplication:profiles:${profile}:secure_labels:edit",
-            "tealium:accounts:myapplication:profiles:${profile}:edit",
-            "tealium:accounts:myapplication:profiles:${profile}:templates:*",
-            "tealium:accounts:myapplication:profiles:${profile}:publish_targets:qa:publish",
-            "tealium:accounts:myapplication:profiles:${profile}:publish_targets:prod:publish",
-            "tealium:accounts:myapplication:profiles:${profile}:copy",
-            "tealium:accounts:myapplication:profiles:${profile}:publish_targets:dev:publish"]}
+            "mydomain:accounts:myapplication:read",
+            "mydomain:accounts:myapplication:extensions:javascript:edit",
+            "mydomain:accounts:myapplication:profiles:${profile}:read",
+            "mydomain:accounts:myapplication:profiles:${profile}:secure_labels:edit",
+            "mydomain:accounts:myapplication:profiles:${profile}:edit",
+            "mydomain:accounts:myapplication:profiles:${profile}:templates:*",
+            "mydomain:accounts:myapplication:profiles:${profile}:publish_targets:qa:publish",
+            "mydomain:accounts:myapplication:profiles:${profile}:publish_targets:prod:publish",
+            "mydomain:accounts:myapplication:profiles:${profile}:copy",
+            "mydomain:accounts:myapplication:profiles:${profile}:publish_targets:dev:publish"]}
         }
     )
 EOF
@@ -128,7 +116,7 @@ set_user_status()
 {
   # set the user status to active
   ${_mongo} ${db} <<EOF
-    db.users.update(
+    db.foo.update(
       {email: "${email}"},
         {\$set:
           {status: 'active'}
