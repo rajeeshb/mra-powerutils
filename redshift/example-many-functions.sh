@@ -1,14 +1,14 @@
 #!/usr/local/bin/bash
 
 set -e
-set -x
+#set -x
 
 #
 ## USAGE FOR GETOPTS/PARAMS NEEDED FOR THIS PROGRAM:
 #
 usage () {
     echo "Usage: $0 -c cluster -d database -p profile -t ABC|XYZ"
-    echo "Example: $0 -c cluster -d random -p main -t ABC"
+    echo "Example: $0 -c myapplication-us-east-1-3.melsterdba.com -d random -p main -t ABC"
 }
 
 while getopts ":c:d:p:t:" opt; do
@@ -27,7 +27,6 @@ while getopts ":c:d:p:t:" opt; do
   esac
 done
 
-
 #
 # SETUP VARIABLES AND FILE OUTPUTS
 # Note: There maybe more than just the __main profile
@@ -41,31 +40,41 @@ PSQL=$(which psql)
 PASTE=$(which paste)
 # SQL TEXT FILES
 SQL="${tmpdir}/runDEDUP-$dbtype.sql"
-SQL2="${tmpdir}/runDEDUP-customer_lists_and_tallies.sql"
+SQL2="${tmpdir}/runDEDUP-customer_arrays_and_counts.sql"
 # COLUMN OUTPUT FROM DB QUERIES
-COLS1="${tmpdir}/click_tallies.out"
-COLS2="${tmpdir}/customer_tallies.out"
-COLS3="${tmpdir}/click_lists.out"
-COLS4="${tmpdir}/customer_lists.out"
+COLS1="${tmpdir}/click_counts.out"
+COLS2="${tmpdir}/customer_counts.out"
+COLS3="${tmpdir}/click_arrays.out"
+COLS4="${tmpdir}/customer_arrays.out"
+# COLORIZE OUTPUT
+# Use with echo -e: "-e" escapes the backlash
+RED="\033[0;31m"
+YELLOW="\033[0;33m"
+GREEN="\033[0;32m"
+BLUE="\033[0;34m"
+NC="\033[0m"
 
 
 
 # CREATE THE DIRECTORY FOR THE FILE OUTPUTS
+echo -e "Making a temp directory for SQL:${YELLOW}${tmpdir}"
 mkdir -p "${tmpdir}"
 
 # OUTPUT THE INFORMATIVE DETAILS
-echo "Redshift cluster:${cluster}"
-echo "Customer:${database}"
-echo "Schema:${schemamain}"
-echo "Database to Dedup ${table}"
+echo -e "Redshift cluster:${BLUE}${cluster}"
+echo -e "Customer:${BLUE}${database}"
+echo -e "Schema:${BLUE}${schemamain}"
+echo -e "Database to Dedup:${BLUE}${table}"
 
 
 #
 # MAIN FUNCTIONS FOR THIS PROGRAM:
 # buildSQL:       -Main buildSQL function that creates ALL sql scripts to dedup. It calls buildSQL2 for TALLIS & LISTS tables.
-#                      -If type => ABC then it creates the dedup sql needed for these tables: (CLICKS, CUSTOMERS, CUSTOMER_REPLACES, CUSTOMER_BATCHES)
+#                      -If type => ABC then it creates the dedup sql needed for these tables: (CLICKS, CUSTOMERS, CLICKOR_REPLACES, CLICKOR_BATCHES)
 #                      -If type => XYZ then it creates the dedup sql needed for these tables: (events__all_events)
 # buildSQL2:      -Create the dedup sql for: (CLICK_TALLIES, CLICKOR_TALLIES, CLICK_LISTS, CLICKOR_LISTS)
+#
+# getPW:          -Prompt for the redshift cluster pw to be used by the column queries
 #
 # queryCOLS(1-4): -Database queries to get column names for ABC tables used by buildSQL2
 #
@@ -85,7 +94,7 @@ buildSQL()
  ABC)
     echo -e "/*###CLICKS###*/" >> $SQL
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL
-    echo -e "select count(*), min(updated), max(updated) \n from ( \n select updated \n from  \n ${schemamain}.clicks \n group by click_id, updated \n having count(*) > 1 \n);" >> $SQL
+    echo -e "select count(*), min(updated), max(updated) \n from ( \n select click_id, updated \n from  \n ${schemamain}.clicks \n group by click_id, updated \n having count(*) > 1 \n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL
     echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.clicks_TEMP \n (LIKE  ${schemamain}.clicks INCLUDING DEFAULTS)\n;" >> $SQL
@@ -94,16 +103,16 @@ buildSQL()
     echo -e "insert into ${schemamain}.clicks_TEMP \n (\n SELECT DISTINCT * from ${schemamain}.clicks where click_id in\n (\n select click_id from ${schemamain}.clicks group by click_id, updated having count(*) > 1\n)\n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL
-    echo -e "delete from ${schemamain}.clicks\n WHERE click_id in\n (\n select click_id from ${schemamain}.clicks_TEMP\n);\n" >> $SQL
+    echo -e "delete from ${schemamain}.clicks\n WHERE (click_id,updated) in\n (\n select click_id,updated from ${schemamain}.clicks_TEMP\n);\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL
-    echo -e "insert into ${schemamain}.clicks select * from ${schemamain}.clicks_TEMP;\n" >> $SQL
+    echo -e "insert into ${schemamain}.clicks select DISTINCT * from ${schemamain}.clicks_TEMP;\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL
 
     echo -e "/*###CUSTOMERS###*/" >> $SQL
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL
-    echo -e "select count(*), min(updated), max(updated) \n from ( \n select updated \n from  \n ${schemamain}.customers \n group by customer_id, updated \n having count(*) > 1 \n);" >> $SQL
+    echo -e "select count(*), min(updated), max(updated) \n from ( \n select customer_id, updated \n from  \n ${schemamain}.customers \n group by customer_id, updated \n having count(*) > 1 \n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL
     echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customers_TEMP \n (LIKE  ${schemamain}.customers INCLUDING DEFAULTS)\n;" >> $SQL
@@ -112,16 +121,16 @@ buildSQL()
     echo -e "insert into ${schemamain}.customers_TEMP \n (\n SELECT DISTINCT * from ${schemamain}.customers where customer_id in\n (\n select customer_id from ${schemamain}.customers group by customer_id, updated having count(*) > 1\n)\n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL
-    echo -e "delete from ${schemamain}.customers\n WHERE customer_id in\n (\n select customer_id from ${schemamain}.customers_TEMP\n);\n" >> $SQL
+    echo -e "delete from ${schemamain}.customers\n WHERE (customer_id,updated) in\n (\n select customer_id,updated from ${schemamain}.customers_TEMP\n);\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL
-    echo -e "insert into ${schemamain}.customers select * from ${schemamain}.customers_TEMP;\n" >> $SQL
+    echo -e "insert into ${schemamain}.customers select DISTINCT * from ${schemamain}.customers_TEMP;\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL
 
-    echo -e "/*###CUSTOMER_REPLACES###*/" >> $SQL
+    echo -e "/*###CLICKOR_REPLACES###*/" >> $SQL
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL
-    echo -e "select count(*), min(updated), max(updated) \n from ( \n select updated \n from  \n ${schemamain}.customer_replaces \n group by customer_replaces_id, updated \n having count(*) > 1 \n);" >> $SQL
+    echo -e "select count(*), min(updated), max(updated) \n from ( \n select customer_replaces_id, updated \n from  \n ${schemamain}.customer_replaces \n group by customer_replaces_id, updated \n having count(*) > 1 \n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL
     echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customer_replaces_TEMP \n (LIKE  ${schemamain}.customer_replaces INCLUDING DEFAULTS)\n;" >> $SQL
@@ -130,27 +139,28 @@ buildSQL()
     echo -e "insert into ${schemamain}.customer_replaces_TEMP \n (\n SELECT DISTINCT * from ${schemamain}.customer_replaces where customer_replaces_id in\n (\n select customer_replaces_id from ${schemamain}.customer_replaces group by customer_replaces_id, updated having count(*) > 1\n)\n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL
-    echo -e "delete from ${schemamain}.customer_replaces\n WHERE customer_replaces_id in\n (\n select customer_replaces_id from ${schemamain}.customer_replaces_TEMP\n);\n" >> $SQL
+    echo -e "delete from ${schemamain}.customer_replaces\n WHERE (customer_replaces_id,updated) in\n (\n select customer_replaces_id,updated from ${schemamain}.customer_replaces_TEMP\n);\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL
-    echo -e "insert into ${schemamain}.customer_replaces select * from ${schemamain}.customer_replaces_TEMP;\n" >> $SQL
+    echo -e "insert into ${schemamain}.customer_replaces select DISTINCT * from ${schemamain}.customer_replaces_TEMP;\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL
 
-    echo -e "/*###CUSTOMER_BATCHES###*/" >> $SQL
+    echo -e "/*###CLICKOR_BATCHES###*/" >> $SQL
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL
-    echo -e "select count(*), min(batch_time), max(batch_time) \n from ( \n select batch_time \n from  \n ${schemamain}.customer_batches \n group by customer_id, batch_time \n having count(*) > 1 \n);" >> $SQL
+    echo -e "select count(*), min(batch_time), max(batch_time) \n from ( \n select customer_id, batch_time \n from  \n ${schemamain}.customer_batches \n group by customer_id, batch_time \n having count(*) > 1 \n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL
     echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customer_batches_TEMP \n (LIKE  ${schemamain}.customer_batches INCLUDING DEFAULTS)\n;" >> $SQL
     echo -e "\n" >> $SQL
+    echo -e "--3) COPY ROWS OF DUPES TO TEMP TABLE" >> $SQL
     echo -e "insert into ${schemamain}.customer_batches_TEMP \n (\n SELECT DISTINCT * from ${schemamain}.customer_batches where customer_id in\n (\n select customer_id from ${schemamain}.customer_batches group by customer_id, batch_time having count(*) > 1\n)\n);" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL
-    echo -e "delete from ${schemamain}.customer_batches\n WHERE customer_id in\n (\n select customer_id from ${schemamain}.customer_batches_TEMP\n);\n" >> $SQL
+    echo -e "delete from ${schemamain}.customer_batches\n WHERE (customer_id,batch_time) in\n (\n select customer_id,batch_time from ${schemamain}.customer_batches_TEMP\n);\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL
-    echo -e "insert into ${schemamain}.customer_batches select * from ${schemamain}.customer_batches_TEMP;\n" >> $SQL
+    echo -e "insert into ${schemamain}.customer_batches select DISTINCT * from ${schemamain}.customer_batches_TEMP;\n" >> $SQL
     echo -e "\n" >> $SQL
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL
 
@@ -164,7 +174,7 @@ buildSQL()
     echo -e "drop table ${schemamain}.customer_replaces_TEMP;" >> $SQL
     echo -e "drop table ${schemamain}.customer_batches_TEMP;" >> $SQL
 
-    echo -e "Creating a separate sql script for list and tallies..."
+    echo -e "Creating a separate sql script for list and counts..."
     buildSQL2
     ;;
  XYZ)
@@ -192,138 +202,149 @@ buildSQL()
 
 buildSQL2()
 {
-    queryCOLS1
+    getPW
+    queryCOLS1 "$CLPWD"
     echo -e "/*####CLICK_TALLIES####*/" >> $SQL2 
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL2
     echo -e "select count(*), min(updated), max(updated)\nfrom ( \nselect" >> $SQL2
     addFindDupsMD5 $COLS1 >> $SQL2
-    echo -e "from  \n${schemamain}.click_tallies \ngroup by md5sum, click_id, updated having count(*) > 1);" >> $SQL2
+    echo -e "from  \n${schemamain}.click_counts \ngroup by md5sum, click_id, updated having count(*) > 1);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL2
-    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.click_tallies_TEMP \n (LIKE  ${schemamain}.click_tallies INCLUDING DEFAULTS);" >> $SQL2
+    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.click_counts_TEMP \n (LIKE  ${schemamain}.click_counts INCLUDING DEFAULTS);" >> $SQL2
     echo -e "\n" >> $SQL2
-    echo -e "ALTER TABLE ${schemamain}.click_tallies_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
+    echo -e "ALTER TABLE ${schemamain}.click_counts_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--3) COPY ROWS OF DUPES TO TEMP TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.click_tallies_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
+    echo -e "insert into ${schemamain}.click_counts_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
     addInsertTempMD5 $COLS1 >> $SQL2
-    echo -e "from ${schemamain}.click_tallies\n group by md5sum," >> $SQL2
+    echo -e "from ${schemamain}.click_counts\n group by md5sum," >> $SQL2
     $PASTE -sd, "$COLS1" >> $SQL2
     echo -e "having count(*) > 1 \n);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL2
-    echo -e "delete from ${schemamain}.click_tallies \nWHERE (click_id, updated,\n md5(" >> $SQL2
+    echo -e "delete from ${schemamain}.click_counts \nWHERE (click_id, updated,\n md5(" >> $SQL2
     addDeleteMD5 $COLS1 >> $SQL2	
-    echo -e ") in (select click_id, updated, md5sum from ${schemamain}.click_tallies_TEMP);" >> $SQL2
+    echo -e ") in (select click_id, updated, md5sum from ${schemamain}.click_counts_TEMP);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.click_tallies\nselect" >> $SQL2
+    echo -e "insert into ${schemamain}.click_counts\nselect" >> $SQL2
     $PASTE -sd, "$COLS1" >> $SQL2
-    echo -e "from ${schemamain}.click_tallies_TEMP;\n" >> $SQL2
+    echo -e "from ${schemamain}.click_counts_TEMP;\n" >> $SQL2
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL2
     echo -e "--7) CLEANUP TEMP TABLES ONCE EVERYTHING LOOKS GOOD" >> $SQL2
-    echo -e "drop table ${schemamain}.click_tallies_TEMP;" >> $SQL2
+    echo -e "drop table ${schemamain}.click_counts_TEMP;" >> $SQL2
     echo -e "\n" >> $SQL2
 
-    queryCOLS2
+    queryCOLS2 "$CLPWD"
     echo -e "/*####CLICKOR_TALLIES####*/" >> $SQL2 
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL2
     echo -e "select count(*), min(updated), max(updated)\nfrom ( \nselect" >> $SQL2
     addFindDupsMD5 $COLS2 >> $SQL2
-    echo -e "from  \n${schemamain}.customer_tallies \ngroup by md5sum, customer_id, updated having count(*) > 1);" >> $SQL2
+    echo -e "from  \n${schemamain}.customer_counts \ngroup by md5sum, customer_id, updated having count(*) > 1);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL2
-    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customer_tallies_TEMP \n (LIKE  ${schemamain}.customer_tallies INCLUDING DEFAULTS);" >> $SQL2
+    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customer_counts_TEMP \n (LIKE  ${schemamain}.customer_counts INCLUDING DEFAULTS);" >> $SQL2
     echo -e "\n" >> $SQL2
-    echo -e "ALTER TABLE ${schemamain}.customer_tallies_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
+    echo -e "ALTER TABLE ${schemamain}.customer_counts_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--3) COPY ROWS OF DUPES TO TEMP TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.customer_tallies_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
+    echo -e "insert into ${schemamain}.customer_counts_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
     addInsertTempMD5 $COLS2 >> $SQL2
-    echo -e "from ${schemamain}.customer_tallies\n group by md5sum," >> $SQL2
+    echo -e "from ${schemamain}.customer_counts\n group by md5sum," >> $SQL2
     $PASTE -sd, "$COLS2" >> $SQL2
     echo -e "having count(*) > 1 \n);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL2
-    echo -e "delete from ${schemamain}.customer_tallies \nWHERE (customer_id, updated,\n md5(" >> $SQL2
+    echo -e "delete from ${schemamain}.customer_counts \nWHERE (customer_id, updated,\n md5(" >> $SQL2
     addDeleteMD5 $COLS2 >> $SQL2	
-    echo -e ") in (select customer_id, updated, md5sum from ${schemamain}.customer_tallies_TEMP);" >> $SQL2
+    echo -e ") in (select customer_id, updated, md5sum from ${schemamain}.customer_counts_TEMP);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.customer_tallies\nselect" >> $SQL2
+    echo -e "insert into ${schemamain}.customer_counts\nselect" >> $SQL2
     $PASTE -sd, "$COLS2" >> $SQL2
-    echo -e "from ${schemamain}.customer_tallies_TEMP;\n" >> $SQL2
+    echo -e "from ${schemamain}.customer_counts_TEMP;\n" >> $SQL2
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL2
     echo -e "--7) CLEANUP TEMP TABLES ONCE EVERYTHING LOOKS GOOD" >> $SQL2
-    echo -e "drop table ${schemamain}.customer_tallies_TEMP;" >> $SQL2
+    echo -e "drop table ${schemamain}.customer_counts_TEMP;" >> $SQL2
     echo -e "\n" >> $SQL2
 
-    queryCOLS3
+    queryCOLS3 "$CLPWD"
     echo -e "/*####CLICK_LISTS####*/" >> $SQL2 
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL2
     echo -e "select count(*), min(updated), max(updated)\nfrom ( \nselect" >> $SQL2
     addFindDupsMD5 $COLS3 >> $SQL2
-    echo -e "from  \n${schemamain}.click_lists \ngroup by md5sum, click_id, updated having count(*) > 1);" >> $SQL2
+    echo -e "from  \n${schemamain}.click_arrays \ngroup by md5sum, click_id, updated having count(*) > 1);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL2
-    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.click_lists_TEMP \n (LIKE  ${schemamain}.click_lists INCLUDING DEFAULTS);" >> $SQL2
+    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.click_arrays_TEMP \n (LIKE  ${schemamain}.click_arrays INCLUDING DEFAULTS);" >> $SQL2
     echo -e "\n" >> $SQL2
-    echo -e "ALTER TABLE ${schemamain}.click_lists_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
+    echo -e "ALTER TABLE ${schemamain}.click_arrays_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--3) COPY ROWS OF DUPES TO TEMP TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.click_lists_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
+    echo -e "insert into ${schemamain}.click_arrays_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
     addInsertTempMD5 $COLS3 >> $SQL2
-    echo -e "from ${schemamain}.click_lists\n group by md5sum," >> $SQL2
+    echo -e "from ${schemamain}.click_arrays\n group by md5sum," >> $SQL2
     $PASTE -sd, "$COLS3" >> $SQL2
     echo -e "having count(*) > 1 \n);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL2
-    echo -e "delete from ${schemamain}.click_lists \nWHERE (click_id, updated,\n md5(" >> $SQL2
+    echo -e "delete from ${schemamain}.click_arrays \nWHERE (click_id, updated,\n md5(" >> $SQL2
     addDeleteMD5 $COLS3 >> $SQL2	
-    echo -e ") in (select click_id, updated, md5sum from ${schemamain}.click_lists_TEMP);" >> $SQL2
+    echo -e ") in (select click_id, updated, md5sum from ${schemamain}.click_arrays_TEMP);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.click_lists\nselect" >> $SQL2
+    echo -e "insert into ${schemamain}.click_arrays\nselect" >> $SQL2
     $PASTE -sd, "$COLS3" >> $SQL2
-    echo -e "from ${schemamain}.click_lists_TEMP;\n" >> $SQL2
+    echo -e "from ${schemamain}.click_arrays_TEMP;\n" >> $SQL2
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL2
     echo -e "--7) CLEANUP TEMP TABLES ONCE EVERYTHING LOOKS GOOD" >> $SQL2
-    echo -e "drop table ${schemamain}.click_lists_TEMP;" >> $SQL2
+    echo -e "drop table ${schemamain}.click_arrays_TEMP;" >> $SQL2
     echo -e "\n" >> $SQL2
 
-    queryCOLS4
+    queryCOLS4 "$CLPWD"
     echo -e "/*####CLICKOR_LISTS####*/" >> $SQL2 
     echo -e "--1) FIND OUT HOW MANY DUPS" >> $SQL2
     echo -e "select count(*), min(updated), max(updated)\nfrom ( \nselect" >> $SQL2
     addFindDupsMD5 $COLS4 >> $SQL2
-    echo -e "from  \n${schemamain}.customer_lists \ngroup by md5sum, customer_id, updated having count(*) > 1);" >> $SQL2
+    echo -e "from  \n${schemamain}.customer_arrays \ngroup by md5sum, customer_id, updated having count(*) > 1);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--2) CREATE THE TEMP TABLE" >> $SQL2
-    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customer_lists_TEMP \n (LIKE  ${schemamain}.customer_lists INCLUDING DEFAULTS);" >> $SQL2
+    echo -e "CREATE TABLE IF NOT EXISTS \n ${schemamain}.customer_arrays_TEMP \n (LIKE  ${schemamain}.customer_arrays INCLUDING DEFAULTS);" >> $SQL2
     echo -e "\n" >> $SQL2
-    echo -e "ALTER TABLE ${schemamain}.customer_lists_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
+    echo -e "ALTER TABLE ${schemamain}.customer_arrays_TEMP ADD COLUMN md5sum VARCHAR;" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--3) COPY ROWS OF DUPES TO TEMP TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.customer_lists_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
+    echo -e "insert into ${schemamain}.customer_arrays_TEMP \n (\nSELECT *,\nmd5(" >> $SQL2
     addInsertTempMD5 $COLS4 >> $SQL2
-    echo -e "from ${schemamain}.customer_lists\n group by md5sum," >> $SQL2
+    echo -e "from ${schemamain}.customer_arrays\n group by md5sum," >> $SQL2
     $PASTE -sd, "$COLS4" >> $SQL2
     echo -e "having count(*) > 1 \n);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--4) DELETE DUPS FROM ORIGINAL TABLE" >> $SQL2
-    echo -e "delete from ${schemamain}.customer_lists \nWHERE (customer_id, updated,\n md5(" >> $SQL2
+    echo -e "delete from ${schemamain}.customer_arrays \nWHERE (customer_id, updated,\n md5(" >> $SQL2
     addDeleteMD5 $COLS4 >> $SQL2	
-    echo -e ") in (select customer_id, updated, md5sum from ${schemamain}.customer_lists_TEMP);" >> $SQL2
+    echo -e ") in (select customer_id, updated, md5sum from ${schemamain}.customer_arrays_TEMP);" >> $SQL2
     echo -e "\n" >> $SQL2
     echo -e "--5) COPY DE-DUPED ROWS BACK INTO ORIGINAL TABLE" >> $SQL2
-    echo -e "insert into ${schemamain}.customer_lists\nselect" >> $SQL2
+    echo -e "insert into ${schemamain}.customer_arrays\nselect" >> $SQL2
     $PASTE -sd, "$COLS4" >> $SQL2
-    echo -e "from ${schemamain}.customer_lists_TEMP;\n" >> $SQL2
+    echo -e "from ${schemamain}.customer_arrays_TEMP;\n" >> $SQL2
     echo -e "--6) RUN THE FIND DUPS QUERY AGAIN TO VERIFY THAT ALL DUPS HAVE BEEN CLEARED" >> $SQL2
     echo -e "--7) CLEANUP TEMP TABLES ONCE EVERYTHING LOOKS GOOD" >> $SQL2
-    echo -e "drop table ${schemamain}.customer_lists_TEMP;" >> $SQL2
+    echo -e "drop table ${schemamain}.customer_arrays_TEMP;" >> $SQL2
     echo -e "\n" >> $SQL2
     
+}
+
+
+
+# ASK FOR THE PW FOR THE CLUSTER ONCE TO BE USED BY THE QUERIES
+getPW ()
+ {
+  echo -en "Password for ${YELLOW}${cluster}:"
+  read -s clusterpw
+  export CLPWD="${clusterpw}"
 }
 
 
@@ -331,14 +352,14 @@ buildSQL2()
 # QUERY REDSHIFT DB TO GRAB COLUMNS FOR ABC - TALLIES AND LISTS tables
 queryCOLS1()
 {
-"$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
+ PGPASSWORD="$1" "$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
         \a
         \t
         \o $COLS1
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = '$schemamain'
-        AND table_name   = 'click_tallies'
+        AND table_name   = 'click_counts'
         order by ordinal_position;
 EOF
 }
@@ -346,14 +367,14 @@ EOF
 
 queryCOLS2()
 {
-"$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
+ PGPASSWORD="$1" "$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
         \a
         \t
         \o $COLS2
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = '$schemamain'
-        AND table_name   = 'customer_tallies'
+        AND table_name   = 'customer_counts'
         order by ordinal_position;
 EOF
 }
@@ -361,14 +382,14 @@ EOF
 
 queryCOLS3()
 {
-"$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
+ PGPASSWORD="$1" "$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
         \a
         \t
         \o $COLS3
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = '$schemamain'
-        AND table_name   = 'click_lists'
+        AND table_name   = 'click_arrays'
         order by ordinal_position;
 EOF
 }
@@ -376,14 +397,14 @@ EOF
 
 queryCOLS4()
 {
-"$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
+ PGPASSWORD="$1" "$PSQL" -h "${cluster}" -U masteruser -d "$database" -p 5439 << EOF
         \a
         \t
         \o $COLS4
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = '$schemamain'
-        AND table_name   = 'customer_lists'
+        AND table_name   = 'customer_arrays'
         order by ordinal_position;
 EOF
 }
@@ -397,6 +418,8 @@ addFindDupsMD5()
      counter=1
      while IFS='' read -r column; do
 	 case "$column" in
+         click_id)
+          echo -e "$column,";;
 	   customer_id)
 	      echo -e "$column,";;
 	      updated)
@@ -419,6 +442,8 @@ addInsertTempMD5()
      counter=1
      while IFS='' read -r column; do
 	 case "$column" in
+             click_id)
+              echo "$column || '[|]' ||";;
            customer_id)
               echo "$column || '[|]' ||";;
               updated)
@@ -441,6 +466,8 @@ addDeleteMD5()
      counter=1
      while IFS='' read -r column; do
 	 case "$column" in
+             click_id)
+              echo "$column || '[|]' ||";;
            customer_id)
               echo "$column || '[|]' ||";;
               updated)
@@ -460,4 +487,4 @@ addDeleteMD5()
 #
 buildSQL
 
-set +x
+#set +x
