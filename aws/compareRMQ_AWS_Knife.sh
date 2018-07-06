@@ -15,6 +15,14 @@ GREEN="\033[0;32m"
 BLUE="\033[0;34m"
 NC="\033[0m"
 
+# Use a map if you want to alias
+declare -A component_map
+component_map[ca]=customer_action
+component_map[ch]=customer_help
+component_map[hca]=historic_customer_action
+component_map[aa]=actionstream_action
+component_map[aw]=action_workflow
+
 # Usage for getopts
 usage () {
     echo -e "${BLUE}Usage:${GREEN}$0 -r region -c <component>"
@@ -27,6 +35,11 @@ while getopts ":r:c:" opt; do
   case $opt in
     r) region="$OPTARG";;
     c) component="$OPTARG"
+       echo "component=$component"
+       if [ ${#component} -lt 4 ]; then
+           component=${component_map[$component]}
+       fi
+       echo "component=$component"
        if [[ ${component} != @(customer_action|customer_help|historic_customer_action|actionstream_action|action_workflow) ]]; then 
          usage
          exit 1
@@ -44,10 +57,11 @@ _rabbitjson=/tmp/rabbit.json
 _rabbitout=/tmp/rabbit.out
 _knifeoutput=/tmp/knifeoutput.out
 _awsout=/tmp/aws.out
+_curlcreds="youruser:MyPa55word1"
 
 #Curl command to get queues
 curlRabbit(){
-      curl -s -u yourusername:password http://${region}.cluster.rabbitmq.myapplication.com:15672/api/queues/ > ${_rabbitjson}
+      curl -s -u ${_curlcreds} d http://${region}.cluster.rabbitmq.myapplication.com:15672/api/queues/ > ${_rabbitjson}
       #Extract the version numbers and read them into a Bash array.
       readarray -t queuenames < <(jq -r '.[].name' ${_rabbitjson})
 
@@ -169,8 +183,10 @@ diffFiles(){
     local _diff="$(which diff)";  
     echo -e "${GREEN}========================DIFF BETWEEN RABBIT AND AWS================================${GREEN}"
     ${_diff} -y ${_rabbitout} ${_awsout}
+    #${_diff} -y --suppress-common-lines ${_rabbitout} ${_awsout}
     echo -e "${GREEN}========================DIFF BETWEEN RABBIT AND KNIFE SEARCH=======================${GREEN}"
     ${_diff} -y ${_rabbitout} ${_knifeoutput}
+    #${_diff} -y --suppress-common-lines ${_rabbitout} ${_knifeoutput}
 }
 
 
